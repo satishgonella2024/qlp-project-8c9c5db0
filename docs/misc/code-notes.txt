@@ -1,0 +1,267 @@
+{
+    "code": `import * as express from 'express';
+import * as bcrypt from 'bcrypt';
+import * as rateLimit from 'express-rate-limit';
+import * as helmet from 'helmet';
+import * as cors from 'cors';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+});
+app.use(limiter);
+
+// Security headers
+app.use(helmet());
+
+// CORS
+const allowedOrigins = ['https://example.com', 'http://localhost:3000'];
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+};
+app.use(cors(corsOptions));
+
+// Parse JSON request bodies
+app.use(express.json());
+
+// In-memory user store
+let users = [];
+
+// Create a new user
+app.post('/users', async (req, res) => {
+  const { name, email, password } = req.body;
+
+  // Validate and sanitize inputs
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  // Hash the password
+  const saltRounds = 12;
+  const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+  const newUser = { id: users.length + 1, name, email, password: hashedPassword };
+  users.push(newUser);
+
+  res.status(201).json(newUser);
+});
+
+// Get all users
+app.get('/users', (req, res) => {
+  res.json(users);
+});
+
+// Get a specific user
+app.get('/users/:id', (req, res) => {
+  const userId = parseInt(req.params.id);
+  const user = users.find((u) => u.id === userId);
+
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  res.json(user);
+});
+
+// Update a user
+app.put('/users/:id', async (req, res) => {
+  const userId = parseInt(req.params.id);
+  const { name, email, password } = req.body;
+
+  // Validate and sanitize inputs
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  const userIndex = users.findIndex((u) => u.id === userId);
+
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  // Hash the password
+  const saltRounds = 12;
+  const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+  const updatedUser = { id: userId, name, email, password: hashedPassword };
+  users[userIndex] = updatedUser;
+
+  res.json(updatedUser);
+});
+
+// Delete a user
+app.delete('/users/:id', (req, res) => {
+  const userId = parseInt(req.params.id);
+  const userIndex = users.findIndex((u) => u.id === userId);
+
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  users.splice(userIndex, 1);
+  res.status(204).send();
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Something went wrong' });
+});
+
+app.listen(PORT, () => {
+  console.log(\`Server is running on port \${PORT}\`);
+});
+`,
+    "tests": `import * as request from 'supertest';
+import * as app from './app';
+
+describe('User API', () => {
+  let server;
+
+  beforeAll(() => {
+    server = app.listen();
+  });
+
+  afterAll(() => {
+    server.close();
+  });
+
+  describe('POST /users', () => {
+    it('should create a new user', async () => {
+      const response = await request(app)
+        .post('/users')
+        .send({ name: 'John Doe', email: 'john@example.com', password: 'password123' });
+
+      expect(response.status).toBe(201);
+      expect(response.body).toHaveProperty('id');
+      expect(response.body).toHaveProperty('name', 'John Doe');
+      expect(response.body).toHaveProperty('email', 'john@example.com');
+      expect(response.body).not.toHaveProperty('password');
+    });
+
+    it('should return 400 for missing required fields', async () => {
+      const response = await request(app)
+        .post('/users')
+        .send({ name: 'John Doe', email: 'john@example.com' });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error', 'Missing required fields');
+    });
+  });
+
+  describe('GET /users', () => {
+    it('should return a list of users', async () => {
+      const response = await request(app).get('/users');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toBeInstanceOf(Array);
+    });
+  });
+
+  describe('GET /users/:id', () => {
+    it('should return a specific user', async () => {
+      const createResponse = await request(app)
+        .post('/users')
+        .send({ name: 'John Doe', email: 'john@example.com', password: 'password123' });
+
+      const userId = createResponse.body.id;
+
+      const response = await request(app).get(\`/users/\${userId}\`);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('id', userId);
+      expect(response.body).toHaveProperty('name', 'John Doe');
+      expect(response.body).toHaveProperty('email', 'john@example.com');
+      expect(response.body).not.toHaveProperty('password');
+    });
+
+    it('should return 404 for non-existing user', async () => {
+      const response = await request(app).get('/users/999');
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error', 'User not found');
+    });
+  });
+
+  describe('PUT /users/:id', () => {
+    it('should update a user', async () => {
+      const createResponse = await request(app)
+        .post('/users')
+        .send({ name: 'John Doe', email: 'john@example.com', password: 'password123' });
+
+      const userId = createResponse.body.id;
+
+      const response = await request(app)
+        .put(\`/users/\${userId}\`)
+        .send({ name: 'Jane Doe', email: 'jane@example.com', password: 'newpassword' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('id', userId);
+      expect(response.body).toHaveProperty('name', 'Jane Doe');
+      expect(response.body).toHaveProperty('email', 'jane@example.com');
+      expect(response.body).not.toHaveProperty('password', 'newpassword');
+    });
+
+    it('should return 400 for missing required fields', async () => {
+      const createResponse = await request(app)
+        .post('/users')
+        .send({ name: 'John Doe', email: 'john@example.com', password: 'password123' });
+
+      const userId = createResponse.body.id;
+
+      const response = await request(app)
+        .put(\`/users/\${userId}\`)
+        .send({ name: 'Jane Doe', email: 'jane@example.com' });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error', 'Missing required fields');
+    });
+
+    it('should return 404 for non-existing user', async () => {
+      const response = await request(app)
+        .put('/users/999')
+        .send({ name: 'Jane Doe', email: 'jane@example.com', password: 'newpassword' });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error', 'User not found');
+    });
+  });
+
+  describe('DELETE /users/:id', () => {
+    it('should delete a user', async () => {
+      const createResponse = await request(app)
+        .post('/users')
+        .send({ name: 'John Doe', email: 'john@example.com', password: 'password123' });
+
+      const userId = createResponse.body.id;
+
+      const response = await request(app).delete(\`/users/\${userId}\`);
+
+      expect(response.status).toBe(204);
+    });
+
+    it('should return 404 for non-existing user', async () => {
+      const response = await request(app).delete('/users/999');
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error', 'User not found');
+    });
+  });
+});
+`,
+    "documentation": "This is a TypeScript implementation of a basic CRUD API for managing users. It includes endpoints for creating, reading, updating, and deleting users. The API is built using the Express.js framework and includes various security measures such as rate limiting, CORS configuration, input validation, password hashing, and secure headers. The code also includes error handling and a simple in-memory data store for storing user data.",
+    "dependencies": ["express", "bcrypt", "express-rate-limit", "helmet", "cors", "dotenv"]
+}
