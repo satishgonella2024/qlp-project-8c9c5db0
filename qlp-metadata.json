@@ -1,0 +1,14 @@
+{
+  "shared_context": {
+    "language": "typescript",
+    "created_at": "2025-07-15T22:21:42.478099",
+    "updated_at": "2025-07-15T22:22:03.956360",
+    "main_file_name": "index.ts",
+    "project_structure": "flat",
+    "architecture_pattern": "monolith"
+  },
+  "agent_tiers_used": [
+    "unknown"
+  ],
+  "total_execution_time": 115.35212469100952
+}
